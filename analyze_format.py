@@ -20,7 +20,7 @@ def hexdump(data, width=16, size=None):
 for i, fname in enumerate(t89_examples):
     with open(fname, "rb") as f:
         print("file:", fname)
-        hexdump(f.read(), 16, 16 * 6)
+        hexdump(f.read(), 16, 16 * 10)
         print()
         print("=" * 16)
         print()
