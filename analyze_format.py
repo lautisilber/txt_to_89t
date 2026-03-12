@@ -18,9 +18,11 @@ def hexdump(data, width=16, size=None):
 
 
 for i, fname in enumerate(t89_examples):
+    if "test" not in fname:
+        continue
     with open(fname, "rb") as f:
         print("file:", fname)
-        hexdump(f.read(), 16, 16 * 10)
+        hexdump(f.read(), 16, 16 * 50)
         print()
         print("=" * 16)
         print()
