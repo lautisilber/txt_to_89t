@@ -21,9 +21,13 @@ static void bad_ht_initialize(BadHashTable_t *ht) {
     }
 }
 
-// TODO: This is wrong
 static void bad_ht_insert(BadHashTable_t *ht, char key[4], uint8_t value) {
-    ht->t[value].unicode = key[0];
+    uint32_t unicode =
+        ((uint32_t)key[3]) << 24 |
+        ((uint32_t)key[2]) << 16 |
+        ((uint32_t)key[1]) << 8 |
+        ((uint32_t)key[0]);
+    ht->t[value].unicode = unicode;
     ht->t[value].init = true;
 }
 

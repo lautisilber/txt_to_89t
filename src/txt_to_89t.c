@@ -5,6 +5,7 @@
 
 #include "bad_hashtable.h"
 #include "utf8_reader.h"
+#include "file_helpers.h"
 
 #define MIN(a, b) (a > b ? b : a)
 
@@ -185,22 +186,6 @@ typedef struct {
     const char *comment;
 } TIWriterConfig;
 
-static FILE *open_write_ti(const char *fname) {
-    FILE *fptr = fopen(fname, "wb");
-    if (fptr == NULL) {
-        fprintf(stderr, "Coudln't open file %s for writing: %s\n", fname, strerror(errno));
-        exit(1);
-    }
-    return fptr;
-}
-
-static void close_file(FILE *fptr) {
-    if (fclose(fptr)) {
-        perror("Coudln't close file");
-        exit(1);
-    }
-}
-
 static void check_write_file_error(FILE *fptr) {
     if (feof(fptr) || ferror(fptr)) {
         perror("Couldn't write to file");
@@ -368,6 +353,13 @@ int main(int argc, char *argv[]) {
         .text_content_size = text_content_size,
     };
 
+    // delete old output file
+    delete_file_if_exists(fname_89t);
+    FILE *out_file_ptr = open_file(fname_89t, "wb");
+
+    ti_text_write(out_file_ptr, &config);
+
+    close_file(out_file_ptr);
 
     return 0;
 }

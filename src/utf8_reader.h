@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <string.h>
 
+#include "file_helpers.h"
+
 #define GET_PTR_TO_UINT32_SHIFTED_N_BYTES(i, shift) (((unsigned char*)(&c) + shift))
 
 static bool read_byte(FILE *fptr, unsigned char *c, bool allow_eof) {
@@ -112,11 +114,7 @@ static size_t read_utf8(const char *fname, uint32_t *buffer) {
     uint32_t c;
     size_t i = 0;
 
-    FILE *fptr = fopen(fname, "r");
-    if (fptr == NULL) {
-        perror("Coudln't open file %s for reading");
-        goto error;
-    }
+    FILE *fptr = open_file(fname, "r");
 
     // Seek to the end of the file
     if (fseek(fptr, 0, SEEK_END) != 0) {
