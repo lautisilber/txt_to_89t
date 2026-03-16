@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "bad_hashtable.h"
+#include "utf8_reader.h"
 
 #define MIN(a, b) (a > b ? b : a)
 
@@ -179,21 +180,10 @@ typedef enum {
 typedef struct {
     SupportedFormat format;
     StoreType store_type;
-    char folder_name[FOLDER_NAME_LENGTH + 1]; // one extra for '\0'
-    char variable_name[VARIABLE_NAME_LENGTH + 1]; // one extra for '\0'
-    char comment[COMMENT_LENGTH + 1]; // one extra for '\0'
-    DataType data_type;
+    const char *folder_name;
+    const char *variable_name;
+    const char *comment;
 } TIWriterConfig;
-
-
-static FILE *open_read_txt(const char *fname) {
-    FILE *fptr = fopen(fname, "r");
-    if (fptr == NULL) {
-        fprintf(stderr, "Coudln't open file %s for reading: %s\n", fname, strerror(errno));
-        exit(1);
-    }
-    return fptr;
-}
 
 static FILE *open_write_ti(const char *fname) {
     FILE *fptr = fopen(fname, "wb");
@@ -206,19 +196,14 @@ static FILE *open_write_ti(const char *fname) {
 
 static void close_file(FILE *fptr) {
     if (fclose(fptr)) {
-        fprintf(stderr, "Coudln't close fil: %s\n", strerror(errno));
+        perror("Coudln't close file");
         exit(1);
     }
 }
 
-static void check_file_error(FILE *fptr) {
-    if (feof(fptr)) {
-        fprintf(stderr, "feof error\n");
-        fclose(fptr);
-        exit(1);
-    }
-    if (ferror(fptr)) {
-        fprintf(stderr, "ferror error\n");
+static void check_write_file_error(FILE *fptr) {
+    if (feof(fptr) || ferror(fptr)) {
+        perror("Couldn't write to file");
         fclose(fptr);
         exit(1);
     }
@@ -226,22 +211,22 @@ static void check_file_error(FILE *fptr) {
 
 static void write_ubyte(FILE *fptr, uint8_t i) {
     fwrite(&i, 1, sizeof(uint8_t), fptr);
-    check_file_error(fptr);
+    check_write_file_error(fptr);
 }
 
 static void write_ushort(FILE *fptr, uint16_t i) {
     fwrite(&i, 1, sizeof(uint16_t), fptr);
-    check_file_error(fptr);
+    check_write_file_error(fptr);
 }
 
 static void write_uint(FILE *fptr, uint32_t i) {
     fwrite(&i, 1, sizeof(uint32_t), fptr);
-    check_file_error(fptr);
+    check_write_file_error(fptr);
 }
 
 static void write_chararr(FILE *fptr, const char *str, size_t size) {
     fwrite(str, size, sizeof(char), fptr);
-    check_file_error(fptr);
+    check_write_file_error(fptr);
 }
 
 static void write_str(FILE *fptr, const char *str) {
@@ -293,35 +278,96 @@ static void write_checksum(FILE *fptr, size_t checksum) {
 // TITextWriter
 typedef struct {
     TIWriterConfig config;
-    const char *text_content;
+    const uint32_t *text_content;
     size_t text_content_size;
 } TITextWriter;
 
 static void ti_text_write(FILE *fptr, const TITextWriter *t) {
+    write_header(fptr, &t->config, t->text_content_size, TEXT);
+
     // get content size
     const unsigned int content_size = t->text_content_size + 0x12;
 
     // write content and keep count of sum
     const unsigned int length4 = t->text_content_size + 0x4;
-    
+
     write_uint(fptr, length4);
     write_ubyte(fptr, 0x0);
     write_ubyte(fptr, 0x1); // start of text
     write_ubyte(fptr, 0x20); // TODO: idk if this is needed
-    
+
     unsigned int sum = (length4 & 0xFF) + ((length4 >> 8) & 0xFF);
-    
-    for i in 
-    
+
+    for (size_t i = 0; i < t->text_content_size; ++i) {
+        uint32_t c = t->text_content[i];
+        if (c <= 0x7F) { // if it's an ascii character
+            // do nothing
+        } else {
+            uint8_t value;
+            bool special_char = bad_ht_get(&unicode_ti_table, c, &value);
+            if (special_char) {
+                c = value;
+            } else {
+                fprintf(stderr, "Invalid code\n");
+                exit(1);
+            }
+        }
+        sum += c;
+        write_ubyte(fptr, c);
+    }
+    write_ushort(fptr, 0xE0); // end of file
+
+    size_t checksum = sum + 0xE0 + 0x1;
+    write_checksum(fptr, checksum);
 }
 
+void print_usage() {
 
+}
+
+// argument 1 -> .txt source
+// argument 2 -> .89t output
+// argument 3 -> variable
+// argument 4 -> folder
 int main(int argc, char *argv[]) {
-    for (int i = 0; i < argc; ++i) {
-        printf("Arg %i: %s\n", i, argv[i]);
+    if (argc == 1) {
+        print_usage();
+    } else if (argc < 5) {
+        printf("Error: bad arguments");
+        print_usage();
     }
 
-    printf("Hello, world!\n");
+    const char *fname_txt = argv[1];
+    const char *fname_89t = argv[2];
+    const char *variable = argv[3];
+    const char *folder = argv[4];
+
+    const size_t vlen = strlen(variable);
+    const size_t flen = strlen(folder);
+    if (vlen == 0 || vlen > VARIABLE_NAME_LENGTH) {
+        fprintf(stderr, "Variable has to be at least one char long and up to %u chars long\n", VARIABLE_NAME_LENGTH);
+        exit(1);
+    }
+    if (flen == 0 || flen > FOLDER_NAME_LENGTH) {
+        fprintf(stderr, "Folder name has to be at least one char long and up to %u chars long\n", FOLDER_NAME_LENGTH);
+        exit(1);
+    }
+
+    uint32_t *text_content = NULL;
+    size_t text_content_size = read_utf8(fname_txt, text_content);
+
+    TITextWriter config = {
+        .config = {
+            .comment = "Generated by txt_to_89t",
+            .folder_name = folder,
+            .variable_name = variable,
+            .format = TI89,
+            .store_type = ARCHIVE,
+        },
+        .text_content = text_content,
+        .text_content_size = text_content_size,
+    };
+
 
     return 0;
 }
