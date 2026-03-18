@@ -186,66 +186,66 @@ typedef struct {
     const char *comment;
 } TIWriterConfig;
 
-static void check_write_file_error(FILE *fptr) {
-    if (feof(fptr) || ferror(fptr)) {
-        perror("Couldn't write to file");
-        fclose(fptr);
-        exit(1);
-    }
-}
-
-static void write_ubyte(FILE *fptr, uint8_t i) {
+static size_t write_ubyte(FILE *fptr, uint8_t i) {
     fwrite(&i, 1, sizeof(uint8_t), fptr);
     check_write_file_error(fptr);
+    return sizeof(uint8_t);
 }
 
-static void write_ushort(FILE *fptr, uint16_t i) {
-    fwrite(&i, 1, sizeof(uint16_t), fptr);
+static size_t write_ushort(FILE *fptr, uint16_t i) {
+    // fwrite(&i, 1, sizeof(uint16_t), fptr);
+    // check_write_file_error(fptr);
+    // return sizeof(uint16_t);
+    return write_endian(fptr, &i, sizeof(uint16_t), BIGENDIAN);
+}
+
+static size_t write_uint(FILE *fptr, uint32_t i) {
+    // fwrite(&i, 1, sizeof(uint32_t), fptr);
+    // check_write_file_error(fptr);
+    // return sizeof(uint32_t);
+    return write_endian(fptr, &i, sizeof(uint32_t), BIGENDIAN);
+}
+
+static size_t write_chararr_fixed_size(FILE *fptr, const char *str, size_t size, size_t fixed_size) {
+    fwrite(str, MIN(size, fixed_size), sizeof(char), fptr);
     check_write_file_error(fptr);
+    for (size_t i = size; i < fixed_size; ++i) {
+        fputc(0x0, fptr);
+        check_write_file_error(fptr);
+    }
+    return sizeof(char) * fixed_size;
 }
 
-static void write_uint(FILE *fptr, uint32_t i) {
-    fwrite(&i, 1, sizeof(uint32_t), fptr);
-    check_write_file_error(fptr);
+static size_t write_chararr(FILE *fptr, const char *str, size_t size) {
+    return write_chararr_fixed_size(fptr, str, size, size);
 }
 
-static void write_chararr(FILE *fptr, const char *str, size_t size) {
-    fwrite(str, size, sizeof(char), fptr);
-    check_write_file_error(fptr);
+static size_t write_str_fixed_size(FILE *fptr, const char *str, size_t fixed_size) {
+    const size_t size = strlen(str);
+    return write_chararr_fixed_size(fptr, str, size, fixed_size);
 }
 
-static void write_str(FILE *fptr, const char *str) {
-    write_chararr(fptr, str, strlen(str));
+static size_t write_str(FILE *fptr, const char *str) {
+    return write_chararr(fptr, str, strlen(str));
 }
 
 static void write_header(FILE *fptr, const TIWriterConfig *config, size_t content_file_size, DataType data_type) {
-    const size_t folder_name_size = MIN(strlen(config->folder_name), FOLDER_NAME_LENGTH);
-    const size_t variable_name_size = MIN(strlen(config->variable_name), VARIABLE_NAME_LENGTH);
-    const size_t comment_size = MIN(strlen(config->folder_name), COMMENT_LENGTH);
+    size_t file_size = 0;
 
-    write_str(fptr, supported_format_to_str(config->format));
-    write_ushort(fptr, 0x1 << 8);
-    write_chararr(fptr, config->folder_name, folder_name_size);
-    write_chararr(fptr, config->comment, comment_size);
-    write_ushort(fptr, 0x1 << 8); // number of vars = 1
-    write_uint(fptr, 0x52 << 24); // data adress
-    write_chararr(fptr, config->variable_name, variable_name_size);
-    write_ubyte(fptr, data_type);
-    write_ubyte(fptr, config->store_type);
-    write_ushort(fptr, 0xFF << 8); // ?
+    file_size += write_str(fptr, supported_format_to_str(config->format));
+    file_size += write_ushort(fptr, 0x1 << 8);
+    file_size += write_str_fixed_size(fptr, config->folder_name, FOLDER_NAME_LENGTH);
+    file_size += write_str_fixed_size(fptr, config->comment, COMMENT_LENGTH);
+    file_size += write_ushort(fptr, 0x1 << 8); // number of vars = 1
+    file_size += write_uint(fptr, 0x52 << 24); // data adress
+    // file_size += write_uint(fptr, 0x52 << 8); // data adress
+    file_size += write_str_fixed_size(fptr, config->variable_name, VARIABLE_NAME_LENGTH);
+    file_size += write_ubyte(fptr, data_type);
+    file_size += write_ubyte(fptr, config->store_type);
+    // file_size += write_ushort(fptr, 0xFF); // ?
+    file_size += write_ushort(fptr, 0xFF << 8); // ?
 
-    const size_t file_size =
-        strlen(supported_format_to_str(config->format)) +
-        2 +
-        folder_name_size +
-        comment_size +
-        2 +
-        4 +
-        variable_name_size +
-        1 +
-        1 +
-        1 +
-        content_file_size;
+    file_size += content_file_size + 8;
 
     write_ubyte(fptr, file_size & 0xFF);
     write_ubyte(fptr, (file_size >> 8) & 0xFF);
@@ -268,32 +268,46 @@ typedef struct {
 } TITextWriter;
 
 static void ti_text_write(FILE *fptr, const TITextWriter *t) {
-    write_header(fptr, &t->config, t->text_content_size, TEXT);
-
     // get content size
-    const unsigned int content_size = t->text_content_size + 0x12;
+    unsigned int content_size = t->text_content_size;
 
-    // write content and keep count of sum
-    const unsigned int length4 = t->text_content_size + 0x4;
+    // count newlines
+    for (size_t i = 0; i < t->text_content_size; ++i) {
+        if (t->text_content[i] == 0x0A) { // newline
+            ++content_size;
+            printf("R\n");
+        }
+    }
+    printf("tc %lu, c: %u\n", t->text_content_size, content_size);
 
-    write_uint(fptr, length4);
+    write_header(fptr, &t->config, content_size + 7, TEXT);
+
+    write_uint(fptr, content_size);
     write_ubyte(fptr, 0x0);
     write_ubyte(fptr, 0x1); // start of text
     write_ubyte(fptr, 0x20); // TODO: idk if this is needed
 
-    unsigned int sum = (length4 & 0xFF) + ((length4 >> 8) & 0xFF);
+    unsigned int sum = (content_size & 0xFF) + ((content_size >> 8) & 0xFF);
 
     for (size_t i = 0; i < t->text_content_size; ++i) {
         uint32_t c = t->text_content[i];
+        printf("%u (%c)\n", c, c);
         if (c <= 0x7F) { // if it's an ascii character
-            // do nothing
+            if (c == 0x0A) { // new line
+                const char c2 = 0x0D; // carriage return
+                write_ubyte(fptr, c2);
+                sum += c2;
+                c = 0x20; // space
+            } else if (c == 0x0D) { // carriage return -> skip
+                continue;
+            }
         } else {
             uint8_t value;
             bool special_char = bad_ht_get(&unicode_ti_table, c, &value);
             if (special_char) {
                 c = value;
             } else {
-                fprintf(stderr, "Invalid code\n");
+                fprintf(stderr, "Invalid code %u\n", c);
                 exit(1);
             }
         }
@@ -314,7 +328,16 @@ void print_usage() {
 // argument 2 -> .89t output
 // argument 3 -> variable
 // argument 4 -> folder
+
+#ifdef DEBUG
+#define FNAME_TXT "test/test.txt"
+#define FNAME_89T "examples/test_a.89t"
+#define VARIABLE "test"
+#define FOLDER "main"
+#endif
+
 int main(int argc, char *argv[]) {
+    #ifndef DEBUG
     if (argc == 1) {
         print_usage();
     } else if (argc < 5) {
@@ -326,6 +349,12 @@ int main(int argc, char *argv[]) {
     const char *fname_89t = argv[2];
     const char *variable = argv[3];
     const char *folder = argv[4];
+    #else
+    const char *fname_txt = FNAME_TXT;
+    const char *fname_89t = FNAME_89T;
+    const char *variable = VARIABLE;
+    const char *folder = FOLDER;
+    #endif
 
     const size_t vlen = strlen(variable);
     const size_t flen = strlen(folder);
@@ -339,14 +368,15 @@ int main(int argc, char *argv[]) {
     }
 
     uint32_t *text_content = NULL;
-    size_t text_content_size = read_utf8(fname_txt, text_content);
+    const char *a = fname_89t;
+    size_t text_content_size = read_utf8(fname_txt, &text_content);
 
     TITextWriter config = {
         .config = {
-            .comment = "Generated by txt_to_89t",
+            .comment = "comment",
             .folder_name = folder,
             .variable_name = variable,
-            .format = TI89,
+            .format = TI92P,
             .store_type = ARCHIVE,
         },
         .text_content = text_content,
@@ -360,6 +390,10 @@ int main(int argc, char *argv[]) {
     ti_text_write(out_file_ptr, &config);
 
     close_file(out_file_ptr);
+
+    free(text_content);
+
+    puts("done");
 
     return 0;
 }

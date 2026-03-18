@@ -108,11 +108,9 @@ static bool read_utf8_char(FILE *fptr, uint32_t *unicode_char, uint8_t *bytes_in
     return true;
 }
 
-static size_t read_utf8(const char *fname, uint32_t *buffer) {
-    fname = NULL;
+static size_t read_utf8(const char *fname, uint32_t **buffer) {
     long size;
     uint32_t c;
-    size_t i = 0;
 
     FILE *fptr = open_file(fname, "r");
 
@@ -125,19 +123,48 @@ static size_t read_utf8(const char *fname, uint32_t *buffer) {
     // Get the current position, which is the size
     size = ftell(fptr);
     if (size == -1) {
-        perror("Error getting file position");
+        perror("Error getting file size");
         goto error;
     }
 
-    if (fclose(fptr)) {
+    errno = 0;
+    rewind(fptr);
+    if (errno) {
+        perror("Error rwinding file");
+        goto error;
+    }
+
+    *buffer = (uint32_t*)malloc(sizeof(uint32_t) * size);
+    size = 0;
+    while (read_utf8_char(fptr, &c, NULL)) {
+        (*buffer)[size++] = c;
+    }
+
+    if (fclose(fptr) != 0) {
         perror("Coudln't close file");
         goto error;
     }
 
-    buffer = (uint32_t*)malloc(sizeof(uint32_t) * size);
-    while (read_utf8_char(fptr, &c, NULL)) {
-        buffer[i++] = c;
+    // remove carriage returns when followed by a new line
+    for (size_t i = 0; i < size - 1;) {
+        if ((*buffer)[i] == 0x0D && (*buffer)[i+1] == 0x0A) {
+            memmove((*buffer) + i,
+                    (*buffer) + i + 1,
+                    (size - i - 1) * sizeof(uint32_t));
+            --size;
+        } else {
+            ++i;
+        }
     }
+
+    // shrink
+    *buffer = (uint32_t*)realloc(*buffer, size * sizeof(uint32_t));
+    if (*buffer == NULL) {
+        fprintf(stderr, "Couldn't shrink buffer\n");
+        exit(1);
+    }
+
+    return (size_t)size;
 
     error:
     fclose(fptr);

@@ -1,6 +1,5 @@
 import glob
 import os
-import textwrap
 
 this_dir = os.path.dirname(os.path.realpath(__file__))
 t89_examples_dir = os.path.join(this_dir, "examples")
@@ -18,10 +17,9 @@ def hexdump(data, width=16, size=None):
 
 
 for i, fname in enumerate(t89_examples):
-    if "test" not in fname:
-        continue
+    bs = os.stat(fname).st_size
     with open(fname, "rb") as f:
-        print("file:", fname)
+        print("file:", fname, f"({bs} bytes)")
         hexdump(f.read(), 16, 16 * 50)
         print()
         print("=" * 16)
